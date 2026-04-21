@@ -1,36 +1,43 @@
-import { Injectable, ConflictException, NotFoundException } from '@nestjs/common';
+import { Injectable, ConflictException, UnauthorizedException } from '@nestjs/common';
+import { InjectRepository } from '@nestjs/typeorm';
+import { Repository } from 'typeorm';
 import * as bcrypt from 'bcrypt';
 import { CreateUserDto } from './dto/create-user.dto';
 import { User } from './entities/user.entity';
-import { UsersRepository } from './users.repository';
 
 @Injectable()
 export class UsersService {
-    constructor(private readonly usersRepository: UsersRepository) { }
+    constructor(
+        @InjectRepository(User)
+        private usersRepository: Repository<User>,
+    ) { }
 
     async create(createUserDto: CreateUserDto): Promise<Omit<User, 'password'>> {
-        const existingUser = await this.usersRepository.findByEmail(createUserDto.email);
+        // Verificar si ya existe por email o username
+        const existingUser = await this.usersRepository.findOne({
+            where: [{ email: createUserDto.email }, { username: createUserDto.username }],
+        });
         if (existingUser) {
-            throw new ConflictException('El email ya está registrado');
+            throw new ConflictException('El email o nombre de usuario ya está registrado');
         }
 
         const hashedPassword = await bcrypt.hash(createUserDto.password, 10);
-
-        const user = await this.usersRepository.create({
+        const newUser = this.usersRepository.create({
             ...createUserDto,
             password: hashedPassword,
         });
 
-        const { password, ...result } = user;
+        const savedUser = await this.usersRepository.save(newUser);
+        const { password, ...result } = savedUser;
         return result;
     }
 
     async findByEmail(email: string): Promise<User | null> {
-        return this.usersRepository.findByEmail(email);
+        return this.usersRepository.findOneBy({ email });
     }
 
     async findById(id: string): Promise<Omit<User, 'password'> | null> {
-        const user = await this.usersRepository.findById(id);
+        const user = await this.usersRepository.findOneBy({ id });
         if (!user) return null;
         const { password, ...result } = user;
         return result;
@@ -38,7 +45,7 @@ export class UsersService {
 
     async validateUser(email: string, password: string): Promise<Omit<User, 'password'> | null> {
         const user = await this.findByEmail(email);
-        if (user && await bcrypt.compare(password, user.password)) {
+        if (user && (await bcrypt.compare(password, user.password))) {
             const { password, ...result } = user;
             return result;
         }
